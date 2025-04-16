@@ -12,6 +12,6 @@ read msg
 git commit -m "$msg"
 
 echo "🚀 Push ke GitHub..."
-git push
+git push -u origin main
 
 echo "✅ Selesai dipush ke GitHub!"
