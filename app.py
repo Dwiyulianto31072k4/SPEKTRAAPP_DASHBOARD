@@ -12,7 +12,7 @@ from pages.export import show_export_page
 
 # Set konfigurasi halaman
 st.set_page_config(
-    page_title="SPEKTRA Customer Segmentation & Promo App",
+    page_title="SPEKTRA Customer Segmentation",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
