@@ -12,7 +12,7 @@ from pages.export import show_export_page
 
 # Set konfigurasi halaman
 st.set_page_config(
-    page_title="SPEKTRA Customer Segmentation SPEKTRA OKEEEEE",
+    page_title="SPEKTRA Customer Segmentation SPEKTRA",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -71,7 +71,15 @@ def load_sidebar():
     st.sidebar.markdown("### Navigation")
     pages = ["Upload & Preprocessing", "Exploratory Data Analysis", "Segmentation Analysis", 
              "Promo Mapping", "Dashboard", "Export & Documentation"]
-    selected_page = st.sidebar.radio("Go to", pages)
+    
+    # Get current page from session state
+    current_page = st.session_state.get('page', "Upload & Preprocessing")
+    
+    selected_page = st.sidebar.radio("Go to", pages, index=pages.index(current_page))
+    
+    # Update session state with new page
+    if selected_page != current_page:
+        st.session_state.page = selected_page
     
     # Info tambahan di sidebar
     st.sidebar.markdown("---")
@@ -80,6 +88,26 @@ def load_sidebar():
     
     Dibangun oleh Tim Data Science FIFGROUP.
     """)
+    
+    # Add data cleanliness indicator
+    if 'data' in st.session_state and st.session_state.data is not None:
+        data_clean = True
+        unknown_count = 0
+        
+        # Check for any NaN or "Unknown" values
+        for col in st.session_state.data.columns:
+            if st.session_state.data[col].isna().any():
+                data_clean = False
+                unknown_count += st.session_state.data[col].isna().sum()
+            elif st.session_state.data[col].dtype == 'object' or col.endswith('_Kategori'):
+                if any(st.session_state.data[col].str.contains('Unknown', case=False, na=False)):
+                    data_clean = False
+                    unknown_count += st.session_state.data[col].str.contains('Unknown', case=False, na=False).sum()
+        
+        if data_clean:
+            st.sidebar.success("✅ Data Quality: Clean (No unknown/NaN values)")
+        else:
+            st.sidebar.error(f"⚠️ Data Quality: {unknown_count} unknown/NaN values detected")
     
     return selected_page
 
@@ -102,6 +130,30 @@ def init_session_state():
         st.session_state.segmentation_completed = False
     if 'promo_mapping_completed' not in st.session_state:
         st.session_state.promo_mapping_completed = False
+    if 'page' not in st.session_state:
+        st.session_state.page = "Upload & Preprocessing"
+
+# Function to validate data cleanliness
+def check_data_quality():
+    """Check data quality and return True if clean, False otherwise"""
+    if 'data' not in st.session_state or st.session_state.data is None:
+        return False
+    
+    data = st.session_state.data
+    
+    # Check for NaN values in any column
+    if data.isna().any().any():
+        return False
+    
+    # Check for "Unknown" values in object columns
+    for col in data.columns:
+        if data[col].dtype == 'object' or col.endswith('_Kategori'):
+            if any(data[col].str.contains('Unknown', case=False, na=False)) or \
+               any(data[col].str.contains('nan', case=False, na=False)) or \
+               any(data[col].str.contains('None', case=False, na=False)):
+                return False
+    
+    return True
 
 # Main function
 def main():
@@ -117,6 +169,14 @@ def main():
         
         # Tampilkan judul utama
         st.markdown('<p class="main-title">SPEKTRA Customer Segmentation & Promo Mapping</p>', unsafe_allow_html=True)
+        
+        # Check data quality if beyond upload page
+        if selected_page != "Upload & Preprocessing" and 'data' in st.session_state and st.session_state.data is not None:
+            if not check_data_quality():
+                st.warning("⚠️ Your data contains unknown or missing values. It's recommended to return to Upload & Preprocessing to clean your data.")
+                if st.button("Go to Upload & Preprocessing"):
+                    st.session_state.page = "Upload & Preprocessing"
+                    st.experimental_rerun()
         
         # Tampilkan halaman sesuai pilihan
         if selected_page == "Upload & Preprocessing":
