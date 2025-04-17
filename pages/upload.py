@@ -111,7 +111,7 @@ def clean_date_string(date_string):
 
 def preprocess_data(data, date_cols):
     """
-    Fungsi untuk memproses data sebelum analisis dengan penanganan khusus untuk BIRTH_DATE
+    Fungsi untuk memproses data sebelum analisis dengan validasi ketat untuk menghilangkan data NaN/unknown
     
     Parameters:
     -----------
@@ -123,10 +123,16 @@ def preprocess_data(data, date_cols):
     Returns:
     --------
     pandas.DataFrame
-        Data yang telah diproses
+        Data yang telah diproses dan divalidasi (tidak ada NaN)
     """
+    import pandas as pd
+    import numpy as np
+    import datetime
+    import re
+    
     processed_data = data.copy()
-
+    valid_data_mask = np.ones(len(processed_data), dtype=bool)  # Mask untuk menyimpan baris valid
+    
     # Konversi kolom tanggal
     for col in date_cols:
         if col in processed_data.columns:
@@ -135,7 +141,6 @@ def preprocess_data(data, date_cols):
                 try:
                     processed_data[col] = pd.to_datetime(processed_data[col], origin='1899-12-30', unit='d', errors='coerce')
                     st.write(f"Converted {col} from numeric (Excel serial) to datetime: {processed_data[col].notna().sum()} valid dates")
-                    continue
                 except Exception as e:
                     st.warning(f"Numeric conversion failed for {col} with error: {e}")
 
@@ -163,6 +168,9 @@ def preprocess_data(data, date_cols):
                 processed_data[col] = pd.to_datetime(processed_data[col], errors='coerce')
                 success_rate = processed_data[col].notna().sum() / len(processed_data)
                 st.write(f"Converted {col} using pandas automatic detection: {processed_data[col].notna().sum()} valid dates ({success_rate:.1%})")
+            
+            # Update mask untuk validasi tanggal
+            valid_data_mask = valid_data_mask & processed_data[col].notna()
 
     # Khusus untuk BIRTH_DATE dengan penanganan lebih agresif
     if 'BIRTH_DATE' in processed_data.columns:
@@ -219,6 +227,11 @@ def preprocess_data(data, date_cols):
 
             # Filter usia yang valid (antara 18 dan 100 tahun)
             valid_age = (processed_data['Usia'] >= 18) & (processed_data['Usia'] <= 100)
+            
+            # Update mask untuk menyimpan baris dengan usia valid
+            valid_data_mask = valid_data_mask & (valid_age | processed_data['BIRTH_DATE'].isna())
+            
+            # Set usia yang tidak valid menjadi NaN (akan dihapus di langkah berikutnya)
             processed_data.loc[~valid_age, 'Usia'] = np.nan
 
             processed_data['Usia'] = pd.to_numeric(processed_data['Usia'], errors='coerce')
@@ -232,14 +245,23 @@ def preprocess_data(data, date_cols):
                 labels = ['<25', '25-35', '35-45', '45-55', '55+']
                 processed_data['Usia_Kategori'] = pd.cut(processed_data['Usia'], bins=bins, labels=labels, right=False)
                 processed_data['Usia_Kategori'] = processed_data['Usia_Kategori'].astype(str)
-                processed_data.loc[processed_data['Usia_Kategori'] == 'nan', 'Usia_Kategori'] = 'Unknown'
+                
+                # Hapus kategori 'nan', kita hanya ingin data valid
+                valid_age_cat = processed_data['Usia_Kategori'] != 'nan'
+                valid_data_mask = valid_data_mask & valid_age_cat
 
-                st.write("Age category distribution:")
+                st.write("Age category distribution (before filtering):")
                 st.write(processed_data['Usia_Kategori'].value_counts())
             else:
                 st.warning("No valid ages could be calculated (between 18-100 years)")
+                # Update mask untuk menandai semua baris sebagai tidak valid jika Usia diperlukan
+                if 'Usia' in processed_data.columns:
+                    valid_data_mask = valid_data_mask & False
         else:
             st.warning("No valid BIRTH_DATE values could be converted")
+            # Update mask untuk menandai semua baris sebagai tidak valid jika BIRTH_DATE diperlukan
+            if 'BIRTH_DATE' in processed_data.columns:
+                valid_data_mask = valid_data_mask & False
     else:
         st.warning("BIRTH_DATE column not found in the data")
 
@@ -253,16 +275,31 @@ def preprocess_data(data, date_cols):
                 processed_data[col] = processed_data[col].astype(str)\
                                             .str.replace(',', '')\
                                             .str.replace(r'[^\d\.-]', '', regex=True)
-            original_count = len(processed_data)
+            
+            # Konversi ke numerik
             processed_data[col] = pd.to_numeric(processed_data[col], errors='coerce')
-            null_count = processed_data[col].isnull().sum()
-            if null_count > 0 and null_count < len(processed_data):
-                median_val = processed_data[col].median()
-                processed_data[col] = processed_data[col].fillna(median_val)
+            
+            # Update mask untuk kolom numerik penting
+            if col in ['TOTAL_AMOUNT_MPF', 'TOTAL_PRODUCT_MPF']:
+                valid_data_mask = valid_data_mask & processed_data[col].notna()
 
+    # Filter data untuk menghapus baris dengan NaN pada kolom penting
+    filtered_data = processed_data[valid_data_mask].copy()
+    
     # Tambahkan fitur tambahan
-    processed_data['PROCESSING_DATE'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    if "TOTAL_PRODUCT_MPF" in processed_data.columns:
-        processed_data["Multi-Transaction_Customer"] = processed_data["TOTAL_PRODUCT_MPF"].astype(float).apply(lambda x: 1 if x > 1 else 0)
+    filtered_data['PROCESSING_DATE'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if "TOTAL_PRODUCT_MPF" in filtered_data.columns:
+        filtered_data["Multi-Transaction_Customer"] = filtered_data["TOTAL_PRODUCT_MPF"].astype(float).apply(lambda x: 1 if x > 1 else 0)
 
-    return processed_data
+    # Tampilkan informasi tentang data yang difilter
+    original_rows = len(processed_data)
+    filtered_rows = len(filtered_data)
+    rows_removed = original_rows - filtered_rows
+    
+    st.info(f"Data validation: {filtered_rows} valid rows out of {original_rows} total rows. {rows_removed} rows with invalid/missing values were removed.")
+    
+    if filtered_rows == 0:
+        st.error("No valid data rows remaining after filtering. Please check your data quality or adjust validation criteria.")
+        return None
+    
+    return filtered_data
