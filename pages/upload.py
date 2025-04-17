@@ -5,7 +5,7 @@ import datetime
 import os
 import re
 
-
+@ensure_data_quality
 def show_upload_page():
     """
     Fungsi untuk menampilkan halaman upload dan preprocessing
@@ -177,6 +177,7 @@ def clean_date_string(date_string):
     date_string = date_string.replace('/', '-').replace('.', '-')
     return date_string.strip()
 
+@ensure_data_quality
 def preprocess_data(data, date_cols):
     """
     Fungsi untuk memproses data sebelum analisis dengan validasi ketat untuk menghilangkan data NaN/unknown
