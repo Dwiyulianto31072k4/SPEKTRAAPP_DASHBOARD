@@ -9,6 +9,7 @@ import re
 def show_upload_page():
     """
     Fungsi untuk menampilkan halaman upload dan preprocessing
+    dengan validasi data ketat untuk menghilangkan NaN/unknown
     """
     st.markdown('<p class="section-title">Upload Customer Data</p>', unsafe_allow_html=True)
 
@@ -18,7 +19,7 @@ def show_upload_page():
         st.session_state.uploaded_file_name = uploaded_file.name
 
         try:
-            # Baca semua kolom sebagai string untuk menjaga konsistensi (namun jika format numeric seperti Excel serial, nantinya akan dideteksi)
+            # Baca semua kolom sebagai string untuk menjaga konsistensi
             data = pd.read_excel(uploaded_file, dtype=str)
             st.success(f"File '{uploaded_file.name}' successfully loaded with {data.shape[0]} rows and {data.shape[1]} columns!")
             st.markdown('<p class="section-title">Data Preview</p>', unsafe_allow_html=True)
@@ -28,37 +29,90 @@ def show_upload_page():
             date_cols = [col for col in data.columns if 'DATE' in col.upper()]
             st.markdown(f"🔍 Auto-detected date columns: `{', '.join(date_cols)}`")
 
+            # Tambahkan pengaturan untuk validasi data
+            st.markdown("### Data Validation Settings")
+            
+            required_cols = st.multiselect(
+                "Select required columns (rows with NaN in these columns will be removed):",
+                options=data.columns.tolist(),
+                default=['CUST_NO', 'LAST_MPF_DATE', 'TOTAL_PRODUCT_MPF', 'TOTAL_AMOUNT_MPF'] if all(col in data.columns for col in ['CUST_NO', 'LAST_MPF_DATE', 'TOTAL_PRODUCT_MPF', 'TOTAL_AMOUNT_MPF']) else []
+            )
+            
+            require_valid_age = st.checkbox("Require valid age data (18-100 years old)", value=True)
+            
+            min_valid_rows = st.slider(
+                "Minimum percentage of valid rows required:",
+                min_value=1, max_value=100, value=50,
+                help="If the percentage of valid rows falls below this threshold, preprocessing will fail."
+            )
+
             if st.button("Preprocess Data"):
                 with st.spinner("Preprocessing data..."):
+                    # Panggil fungsi preprocess_data yang telah dimodifikasi
                     processed_data = preprocess_data(data, date_cols)
-
+                    
+                    if processed_data is None or processed_data.empty:
+                        st.error("❌ Preprocessing failed: No valid data rows after filtering.")
+                        return
+                    
+                    # Validasi tambahan berdasarkan pengaturan pengguna
+                    valid_rows_mask = np.ones(len(processed_data), dtype=bool)
+                    
+                    # Periksa kolom yang diperlukan
+                    for col in required_cols:
+                        if col in processed_data.columns:
+                            valid_rows_mask = valid_rows_mask & processed_data[col].notna()
+                    
+                    # Periksa usia jika diperlukan
+                    if require_valid_age and 'Usia' in processed_data.columns:
+                        valid_age_mask = (processed_data['Usia'] >= 18) & (processed_data['Usia'] <= 100)
+                        valid_rows_mask = valid_rows_mask & valid_age_mask
+                    
+                    # Filter data berdasarkan mask
+                    final_data = processed_data[valid_rows_mask].copy()
+                    
+                    # Periksa persentase baris valid
+                    valid_percentage = (len(final_data) / len(data)) * 100
+                    st.info(f"Valid data rows: {len(final_data)} out of {len(data)} ({valid_percentage:.1f}%)")
+                    
+                    if valid_percentage < min_valid_rows:
+                        st.error(f"❌ Preprocessing failed: Only {valid_percentage:.1f}% valid rows (minimum required: {min_valid_rows}%)")
+                        return
+                    
+                    # Tampilkan hasil preprocessing
                     st.success("✅ Data preprocessing completed!")
-                    st.dataframe(processed_data.head())
+                    st.dataframe(final_data.head())
 
                     # Tampilkan informasi kolom Usia jika ada
-                    if 'Usia' in processed_data.columns:
+                    if 'Usia' in final_data.columns:
                         st.markdown("### Age Information")
-                        valid_ages = processed_data['Usia'].notna().sum()
-                        total_rows = len(processed_data)
+                        valid_ages = final_data['Usia'].notna().sum()
+                        total_rows = len(final_data)
                         st.write(f"Valid age values: {valid_ages} out of {total_rows} rows ({valid_ages/total_rows*100:.1f}%)")
 
                         if valid_ages > 0:
-                            age_stats = processed_data['Usia'].describe()
+                            age_stats = final_data['Usia'].describe()
                             st.write(f"Age statistics: Min={age_stats['min']:.1f}, Max={age_stats['max']:.1f}, Mean={age_stats['mean']:.1f}")
 
-                            if 'Usia_Kategori' in processed_data.columns:
+                            if 'Usia_Kategori' in final_data.columns:
                                 st.write("Age category distribution:")
-                                st.write(processed_data['Usia_Kategori'].value_counts())
-                    else:
-                        st.warning("Age calculation failed. Age-based analysis will not be available.")
-
-                    st.session_state.data = processed_data
+                                st.write(final_data['Usia_Kategori'].value_counts())
+                    
+                    # Pastikan semua kolom kategori yang seharusnya tidak boleh NaN or Unknown
+                    for col in final_data.columns:
+                        if final_data[col].dtype == 'object' or col.endswith('_Kategori'):
+                            # Pastikan tidak ada nilai 'Unknown' atau NaN
+                            if 'Unknown' in final_data[col].values or final_data[col].isna().any():
+                                st.warning(f"Column '{col}' still contains some unknown or NaN values. These may cause issues in later analysis.")
+                    
+                    # Simpan data yang telah divalidasi ke session state
+                    st.session_state.data = final_data
 
                     # Pastikan folder temp ada
                     if not os.path.exists("temp"):
                         os.makedirs("temp")
 
-                    processed_data.to_excel("temp/processed_data.xlsx", index=False)
+                    final_data.to_excel("temp/processed_data.xlsx", index=False)
                     st.session_state.eda_completed = True
 
                     st.markdown("### Next Steps")
@@ -71,6 +125,20 @@ def show_upload_page():
         st.write("Or use our example data to explore the application:")
         if st.button("Use Example Data"):
             example_data = create_example_data()
+            
+            # Validasi data contoh untuk memastikan tidak ada NaN
+            example_data = example_data.dropna()
+            
+            # Pastikan ada kolom Usia dan kategori
+            if 'BIRTH_DATE' in example_data.columns:
+                current_date = pd.Timestamp.now()
+                example_data['Usia'] = ((current_date - pd.to_datetime(example_data['BIRTH_DATE'])).dt.days / 365.25).round()
+                
+                # Buat kategori usia
+                bins = [0, 25, 35, 45, 55, 100]
+                labels = ['<25', '25-35', '35-45', '45-55', '55+']
+                example_data['Usia_Kategori'] = pd.cut(example_data['Usia'], bins=bins, labels=labels, right=False)
+            
             st.success("✅ Example data loaded successfully!")
             st.session_state.data = example_data
             st.session_state.uploaded_file_name = "example_data.xlsx"
