@@ -7,7 +7,7 @@ import os
 def show_upload_page():
     """
     Fungsi untuk menampilkan halaman upload dan preprocessing
-    yang disederhanakan dengan kode standar yang telah ditentukan
+    yang disederhanakan dengan kode standar yang ditentukan
     """
     st.markdown('<p class="section-title">Upload Customer Data</p>', unsafe_allow_html=True)
 
@@ -32,8 +32,37 @@ def show_upload_page():
                     # Terapkan preprocessing standar
                     processed_data = apply_standard_preprocessing(data)
                     
+                    # Tambahkan verifikasi kualitas data
+                    has_na = processed_data.isna().any().any()
+                    unknown_values = False
+
+                    # Periksa nilai "Unknown" di kolom kategorikal
+                    for col in processed_data.select_dtypes(include=['object']).columns:
+                        if any(processed_data[col].str.contains('Unknown|NaN|None', case=False, regex=True, na=False)):
+                            unknown_values = True
+                            break
+
+                    if has_na or unknown_values:
+                        st.error("❌ Data masih mengandung nilai yang hilang atau tidak diketahui setelah preprocessing!")
+                        st.info("Memperbaiki masalah data secara otomatis...")
+                        
+                        # Hapus baris dengan nilai yang hilang atau tidak diketahui
+                        processed_data = processed_data.dropna()
+                        
+                        for col in processed_data.select_dtypes(include=['object']).columns:
+                            mask = processed_data[col].str.contains('Unknown|NaN|None', case=False, regex=True, na=False)
+                            if mask.any():
+                                processed_data = processed_data[~mask]
+                        
+                        if processed_data.empty:
+                            st.error("Semua data hilang setelah pembersihan ketat. Harap periksa file sumber Anda.")
+                            return
+                        
+                        st.success(f"✅ Data berhasil dibersihkan! {len(data) - len(processed_data)} baris dihapus.")
+                    else:
+                        st.success("✅ Data preprocessing completed successfully with 100% clean data!")
+                    
                     # Tampilkan hasil
-                    st.success("✅ Data preprocessing completed successfully!")
                     st.markdown('<p class="section-title">Processed Data Preview</p>', unsafe_allow_html=True)
                     st.dataframe(processed_data.head())
                     
@@ -97,7 +126,7 @@ def show_upload_page():
 
 def apply_standard_preprocessing(data):
     """
-    Menerapkan standar preprocessing sesuai kode yang ditentukan
+    Menerapkan standar preprocessing yang ketat untuk memastikan data benar-benar bersih
     
     Parameters:
     -----------
@@ -107,97 +136,123 @@ def apply_standard_preprocessing(data):
     Returns:
     --------
     pandas.DataFrame
-        Data yang telah diproses dengan standar yang ditentukan
+        Data yang telah diproses dan benar-benar bersih
     """
     # Buat salinan data untuk diproses
     processed_data = data.copy()
     
     # 1. Konversi kolom tanggal dengan format standar
-    try:
-        processed_data['FIRST_PPC_DATE'] = pd.to_datetime(processed_data['FIRST_PPC_DATE'], format='%Y%m%d', errors='coerce')
-        processed_data['FIRST_MPF_DATE'] = pd.to_datetime(processed_data['FIRST_MPF_DATE'], format='%Y%m%d', errors='coerce')
-        processed_data['LAST_MPF_DATE'] = pd.to_datetime(processed_data['LAST_MPF_DATE'], format='%Y%m%d', errors='coerce')
-        processed_data['CONTRACT_ACTIVE_DATE'] = pd.to_datetime(processed_data['CONTRACT_ACTIVE_DATE'], errors='coerce')
-        processed_data['BIRTH_DATE'] = pd.to_datetime(processed_data['BIRTH_DATE'], errors='coerce')
-        
-        # Tambahkan kolom YearMonth dari CONTRACT_ACTIVE_DATE
-        if 'CONTRACT_ACTIVE_DATE' in processed_data.columns:
-            processed_data['YearMonth'] = processed_data['CONTRACT_ACTIVE_DATE'].dt.to_period('M')
-    except Exception as e:
-        st.warning(f"Warning during date conversion: {e}")
+    date_cols = ['FIRST_PPC_DATE', 'FIRST_MPF_DATE', 'LAST_MPF_DATE', 'CONTRACT_ACTIVE_DATE', 'BIRTH_DATE']
+    for col in date_cols:
+        if col in processed_data.columns:
+            processed_data[col] = pd.to_datetime(processed_data[col], format='%Y%m%d', errors='coerce')
     
     # 2. Hitung usia berdasarkan tahun 2024
-    try:
-        if 'BIRTH_DATE' in processed_data.columns:
-            processed_data['Usia'] = 2024 - processed_data['BIRTH_DATE'].dt.year
-    except Exception as e:
-        st.warning(f"Warning during age calculation: {e}")
+    if 'BIRTH_DATE' in processed_data.columns:
+        processed_data['Usia'] = 2024 - processed_data['BIRTH_DATE'].dt.year
     
     # 3. Konversi tipe data untuk kolom numerik
-    try:
-        if 'OCPT_CODE' in processed_data.columns:
-            processed_data['OCPT_CODE'] = processed_data['OCPT_CODE'].astype('Int64')
-        if 'NO_OF_DEPEND' in processed_data.columns:
-            processed_data['NO_OF_DEPEND'] = processed_data['NO_OF_DEPEND'].astype('Int64')
-    except Exception as e:
-        st.warning(f"Warning during integer conversion: {e}")
+    int_cols = ['OCPT_CODE', 'NO_OF_DEPEND']
+    for col in int_cols:
+        if col in processed_data.columns:
+            processed_data[col] = pd.to_numeric(processed_data[col], errors='coerce').astype('Int64')
     
     # 4. Hapus kolom yang tidak diperlukan
-    try:
-        if 'JMH_CON_NON_MPF' in processed_data.columns:
-            processed_data.drop(columns=['JMH_CON_NON_MPF'], inplace=True)
-    except Exception as e:
-        st.warning(f"Warning when dropping columns: {e}")
+    drop_cols = ['JMH_CON_NON_MPF']
+    for col in drop_cols:
+        if col in processed_data.columns:
+            processed_data.drop(columns=[col], inplace=True)
     
-    # 5. Isi nilai yang hilang di kolom numerik
-    try:
-        numeric_fill_cols = ['MONTH_INST', 'OCPT_CODE', 'NO_OF_DEPEND', 'Usia']
-        for col in numeric_fill_cols:
-            if col in processed_data.columns:
-                processed_data[col].fillna(processed_data[col].median(), inplace=True)
-    except Exception as e:
-        st.warning(f"Warning during numeric imputation: {e}")
+    # 5. Pastikan kolom numerik bertipe float
+    float_cols = ['TOTAL_AMOUNT_MPF', 'TOTAL_PRODUCT_MPF', 'MONTH_INST', 'Usia', 
+                 'MAX_MPF_AMOUNT', 'MIN_MPF_AMOUNT', 'LAST_MPF_AMOUNT', 'LAST_MPF_INST']
+    for col in float_cols:
+        if col in processed_data.columns:
+            processed_data[col] = pd.to_numeric(processed_data[col], errors='coerce')
     
-    # 6. Isi nilai yang hilang di kolom kategori
-    try:
-        categorical_fill_cols = ['CUST_SEX', 'EDU_TYPE', 'HOUSE_STAT', 'MARITAL_STAT', 'AREA']
-        for col in categorical_fill_cols:
-            if col in processed_data.columns:
-                if not processed_data[col].empty:
-                    processed_data[col].fillna(processed_data[col].mode()[0], inplace=True)
-    except Exception as e:
-        st.warning(f"Warning during categorical imputation: {e}")
+    # 6. Bersihkan whitespace di kolom kategorikal
+    cat_cols = ['MPF_CATEGORIES_TAKEN', 'CUST_SEX', 'EDU_TYPE', 'HOUSE_STAT', 'MARITAL_STAT', 'AREA']
+    for col in cat_cols:
+        if col in processed_data.columns and processed_data[col].dtype == "object":
+            processed_data[col] = processed_data[col].str.strip()
     
-    # 7. Pastikan semua kolom tanggal dalam format datetime
-    try:
-        date_cols = ['FIRST_PPC_DATE', 'FIRST_MPF_DATE', 'LAST_MPF_DATE', 'CONTRACT_ACTIVE_DATE', 'BIRTH_DATE']
-        for col in date_cols:
-            if col in processed_data.columns:
-                processed_data[col] = pd.to_datetime(processed_data[col], errors='coerce')
-    except Exception as e:
-        st.warning(f"Warning during final date conversion: {e}")
+    # 7. Tambahkan kolom YearMonth
+    if 'CONTRACT_ACTIVE_DATE' in processed_data.columns:
+        processed_data['YearMonth'] = processed_data['CONTRACT_ACTIVE_DATE'].dt.to_period('M')
     
-    # 8. Pastikan kolom numerik bertipe float
-    try:
-        numerical_cols = ['TOTAL_AMOUNT_MPF', 'TOTAL_PRODUCT_MPF', 'MONTH_INST', 'Usia']
-        for col in numerical_cols:
-            if col in processed_data.columns:
-                processed_data[col] = pd.to_numeric(processed_data[col], errors='coerce')
-    except Exception as e:
-        st.warning(f"Warning during numeric conversion: {e}")
+    # 8. Isi nilai yang hilang dengan nilai yang masuk akal
+    # Untuk kolom numerik: gunakan median
+    numeric_cols = float_cols + [col for col in int_cols if col in processed_data.columns]
+    for col in numeric_cols:
+        if col in processed_data.columns:
+            # Isi nilai yang hilang dengan median
+            if processed_data[col].notna().any():  # Pastikan ada setidaknya satu nilai non-NA
+                median_value = processed_data[col].median()
+                processed_data[col].fillna(median_value, inplace=True)
     
-    # 9. Bersihkan whitespace di kolom kategorikal
-    try:
-        categorical_cols = ['MPF_CATEGORIES_TAKEN', 'CUST_SEX', 'EDU_TYPE', 'HOUSE_STAT', 'MARITAL_STAT', 'AREA']
-        for col in categorical_cols:
-            if col in processed_data.columns and processed_data[col].dtype == "object":
-                processed_data[col] = processed_data[col].str.strip()
-    except Exception as e:
-        st.warning(f"Warning during string cleaning: {e}")
+    # Untuk kolom kategorikal: gunakan modus
+    for col in cat_cols:
+        if col in processed_data.columns:
+            # Isi nilai yang hilang dengan modus
+            if processed_data[col].notna().any():  # Pastikan ada setidaknya satu nilai non-NA
+                mode_value = processed_data[col].mode()[0]
+                processed_data[col].fillna(mode_value, inplace=True)
+    
+    # 9. Pastikan tidak ada nilai "Unknown" atau string yang tidak sesuai di kolom kategorikal
+    for col in cat_cols:
+        if col in processed_data.columns and processed_data[col].dtype == "object":
+            # Ganti nilai tidak diketahui dengan modus
+            if processed_data[col].notna().any():  # Pastikan ada setidaknya satu nilai non-NA
+                mode_value = processed_data[col].mode()[0]
+                unknown_mask = processed_data[col].str.contains('Unknown', case=False, na=True) | \
+                              processed_data[col].str.contains('NaN', case=False, na=True) | \
+                              processed_data[col].str.contains('None', case=False, na=True) | \
+                              processed_data[col].isna()
+                processed_data.loc[unknown_mask, col] = mode_value
+    
+    # 10. Usia harus dalam rentang masuk akal, jika tidak dalam rentang, ganti dengan median
+    if 'Usia' in processed_data.columns:
+        if processed_data['Usia'].notna().any():  # Pastikan ada setidaknya satu nilai non-NA
+            median_age = processed_data['Usia'].median()
+            age_mask = (processed_data['Usia'] < 18) | (processed_data['Usia'] > 100) | processed_data['Usia'].isna()
+            processed_data.loc[age_mask, 'Usia'] = median_age
+            
+            # Buat kategori usia
+            bins = [0, 25, 35, 45, 55, 100]
+            labels = ['<25', '25-35', '35-45', '45-55', '55+']
+            processed_data['Usia_Kategori'] = pd.cut(processed_data['Usia'], bins=bins, labels=labels, right=False)
+    
+    # 11. Create business metrics
+    if 'TOTAL_PRODUCT_MPF' in processed_data.columns:
+        processed_data['Multi_Product_Flag'] = (processed_data['TOTAL_PRODUCT_MPF'] > 1).astype(int)
+    
+    if 'LAST_MPF_DATE' in processed_data.columns:
+        reference_date = pd.Timestamp.now()
+        processed_data['Recency_Days'] = (reference_date - processed_data['LAST_MPF_DATE']).dt.days
+        
+        # Recency categories
+        processed_data['Recency_Category'] = pd.cut(
+            processed_data['Recency_Days'],
+            bins=[0, 30, 90, 180, 365, float('inf')],
+            labels=['Very Recent', 'Recent', 'Moderate', 'Lapsed', 'Inactive'],
+            include_lowest=True
+        )
+    
+    # 12. Satu pemeriksaan akhir untuk NaN dan hapus jika ada
+    # Untuk kolom yang paling penting
+    important_cols = ['CUST_NO', 'LAST_MPF_DATE', 'TOTAL_AMOUNT_MPF', 'TOTAL_PRODUCT_MPF']
+    for col in important_cols:
+        if col in processed_data.columns:
+            processed_data = processed_data[processed_data[col].notna()]
+    
+    # 13. Konversi kolom kategori ke string untuk menghindari masalah
+    cat_cols_all = cat_cols + ['Usia_Kategori', 'Recency_Category']
+    for col in cat_cols_all:
+        if col in processed_data.columns:
+            processed_data[col] = processed_data[col].astype(str)
     
     return processed_data
 
-# Menggunakan contoh data yang sudah ada
 def create_example_data():
     """Create a sample customer dataset for testing and demonstration purposes."""
     from utils.data_utils import create_example_data as create_data
