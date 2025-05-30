@@ -199,7 +199,7 @@ def show_segmentation_page():
 
 def display_optimal_segmentation_results(rfm):
    """
-   Menampilkan hasil segmentasi dengan metode optimal
+   Menampilkan hasil segmentasi dengan metode optimal (FIXED VERSION)
    
    Parameters:
    -----------
@@ -251,195 +251,226 @@ def display_optimal_segmentation_results(rfm):
    
    st.plotly_chart(fig, use_container_width=True)
    
-   # Segment metrics
+   # Segment metrics - FIXED: Handle column name properly
    st.markdown("#### Segment Characteristics")
    
-   segment_metrics = rfm.groupby('Segmentasi_optimal').agg({
-       'Recency': 'mean',
-       'Frequency': 'mean',
-       'Monetary': 'mean',
-       'Repeat_Customer': 'mean',
-       'Usia_Segment': 'mean',
-       'CUST_NO': 'count'
-   }).reset_index()
-   
-   segment_metrics.columns = ['Segment', 'Avg Recency (days)', 'Avg Products', 
-                              'Avg Value (Rp)', 'Repeat Rate', 'Prime Age Rate', 'Count']
-   
-   # Format for display
-   segment_metrics['Avg Recency (days)'] = segment_metrics['Avg Recency (days)'].round(0).astype(int)
-   segment_metrics['Avg Products'] = segment_metrics['Avg Products'].round(1)
-   segment_metrics['Avg Value (Rp)'] = segment_metrics['Avg Value (Rp)'].apply(lambda x: f"Rp {x:,.0f}")
-   segment_metrics['Repeat Rate'] = segment_metrics['Repeat Rate'].apply(lambda x: f"{x*100:.1f}%")
-   segment_metrics['Prime Age Rate'] = segment_metrics['Prime Age Rate'].apply(lambda x: f"{x*100:.1f}%")
-   segment_metrics['Percentage'] = (segment_metrics['Count'] / segment_metrics['Count'].sum() * 100).apply(lambda x: f"{x:.1f}%")
-   
-   # Add invitation status
-   segment_invite = rfm.groupby('Segmentasi_optimal')['Layak_Diundang_optimal'].first().reset_index()
-   segment_metrics = segment_metrics.merge(segment_invite, on='Segment')
-   
-   # Display metrics table
-   st.dataframe(segment_metrics)
+   try:
+       # Create segment metrics using the correct column name
+       segment_metrics = rfm.groupby('Segmentasi_optimal').agg({
+           'Recency': 'mean',
+           'Frequency': 'mean',
+           'Monetary': 'mean',
+           'Repeat_Customer': 'mean',
+           'Usia_Segment': 'mean' if 'Usia_Segment' in rfm.columns else lambda x: 0,
+           'CUST_NO': 'count'
+       }).reset_index()
+       
+       segment_metrics.columns = ['Segment', 'Avg Recency (days)', 'Avg Products', 
+                                  'Avg Value (Rp)', 'Repeat Rate', 'Prime Age Rate', 'Count']
+       
+       # Format for display
+       segment_metrics['Avg Recency (days)'] = segment_metrics['Avg Recency (days)'].round(0).astype(int)
+       segment_metrics['Avg Products'] = segment_metrics['Avg Products'].round(1)
+       segment_metrics['Avg Value (Rp)'] = segment_metrics['Avg Value (Rp)'].apply(lambda x: f"Rp {x:,.0f}")
+       segment_metrics['Repeat Rate'] = segment_metrics['Repeat Rate'].apply(lambda x: f"{x*100:.1f}%")
+       segment_metrics['Prime Age Rate'] = segment_metrics['Prime Age Rate'].apply(lambda x: f"{x*100:.1f}%")
+       segment_metrics['Percentage'] = (segment_metrics['Count'] / segment_metrics['Count'].sum() * 100).apply(lambda x: f"{x:.1f}%")
+       
+       # Add invitation status - FIXED: Use correct merge approach
+       segment_invite = rfm.groupby('Segmentasi_optimal')['Layak_Diundang_optimal'].first().reset_index()
+       segment_invite.columns = ['Segment', 'Invitation_Status']
+       
+       # Merge invitation status
+       segment_metrics = segment_metrics.merge(segment_invite, on='Segment', how='left')
+       
+       # Display metrics table
+       st.dataframe(segment_metrics)
+       
+   except Exception as e:
+       st.error(f"Error creating segment metrics: {e}")
+       st.info("Displaying basic segment information instead:")
+       
+       # Fallback: Simple segment distribution
+       basic_metrics = rfm['Segmentasi_optimal'].value_counts().reset_index()
+       basic_metrics.columns = ['Segment', 'Count']
+       basic_metrics['Percentage'] = (basic_metrics['Count'] / basic_metrics['Count'].sum() * 100).apply(lambda x: f"{x:.1f}%")
+       st.dataframe(basic_metrics)
    
    # 3D visualization
    st.markdown("#### 3D Segmentation Visualization")
    
-   fig = px.scatter_3d(
-       rfm,
-       x='Recency',
-       y='Frequency',
-       z='Monetary',
-       color='Segmentasi_optimal',
-       size='Repeat_Customer',
-       opacity=0.7,
-       title="3D Customer Segmentation - RFM"
-   )
+   try:
+       fig = px.scatter_3d(
+           rfm,
+           x='Recency',
+           y='Frequency',
+           z='Monetary',
+           color='Segmentasi_optimal',
+           size='Repeat_Customer',
+           opacity=0.7,
+           title="3D Customer Segmentation - RFM"
+       )
+       
+       fig.update_layout(
+           scene=dict(
+               xaxis_title="Recency (days)",
+               yaxis_title="Frequency (products)",
+               zaxis_title="Monetary (value)"
+           ),
+           height=600
+       )
+       
+       st.plotly_chart(fig, use_container_width=True)
+   except Exception as e:
+       st.warning(f"Could not create 3D visualization: {e}")
    
-   fig.update_layout(
-       scene=dict(
-           xaxis_title="Recency (days)",
-           yaxis_title="Frequency (products)",
-           zaxis_title="Monetary (value)"
-       ),
-       height=600
-   )
-   
-   st.plotly_chart(fig, use_container_width=True)
-   
-   # Feature importance
+   # Feature importance - FIXED: Handle missing score columns
    st.markdown("#### Feature Importance by Segment")
    
-   # Get cluster scores
-   cluster_scores = rfm.groupby('Segmentasi_optimal').agg({
-       'Recency_Score': 'first',
-       'Frequency_Score': 'first',
-       'Monetary_Score': 'first',
-       'Repeat_Score': 'first',
-       'Total_Score': 'first'
-   }).reset_index()
-   
-   # Create radar chart for feature importance
-   fig = go.Figure()
-   
-   for _, row in cluster_scores.iterrows():
-       fig.add_trace(go.Scatterpolar(
-           r=[row['Recency_Score'], row['Frequency_Score'], 
-              row['Monetary_Score'], row['Repeat_Score']],
-           theta=['Recency', 'Frequency', 'Monetary', 'Repeat Rate'],
-           fill='toself',
-           name=row['Segmentasi_optimal']
-       ))
-   
-   fig.update_layout(
-       polar=dict(
-           radialaxis=dict(
-               visible=True,
-               range=[0, 4]
+   try:
+       # Check if score columns exist
+       score_columns = ['Recency_Score', 'Frequency_Score', 'Monetary_Score', 'Repeat_Score']
+       if all(col in rfm.columns for col in score_columns):
+           # Get cluster scores
+           cluster_scores = rfm.groupby('Segmentasi_optimal')[score_columns].first().reset_index()
+           
+           # Create radar chart for feature importance
+           fig = go.Figure()
+           
+           for _, row in cluster_scores.iterrows():
+               fig.add_trace(go.Scatterpolar(
+                   r=[row['Recency_Score'], row['Frequency_Score'], 
+                      row['Monetary_Score'], row['Repeat_Score']],
+                   theta=['Recency', 'Frequency', 'Monetary', 'Repeat Rate'],
+                   fill='toself',
+                   name=row['Segmentasi_optimal']
+               ))
+           
+           fig.update_layout(
+               polar=dict(
+                   radialaxis=dict(
+                       visible=True,
+                       range=[0, 4]
+                   )
+               ),
+               title="Segment Characteristics Comparison (Higher Score = Better)",
+               height=500
            )
-       ),
-       title="Segment Characteristics Comparison (Higher Score = Better)",
-       height=500
-   )
-   
-   st.plotly_chart(fig, use_container_width=True)
+           
+           st.plotly_chart(fig, use_container_width=True)
+       else:
+           st.info("Score columns not available for radar chart.")
+           
+   except Exception as e:
+       st.warning(f"Could not create feature importance chart: {e}")
    
    # Segment details tabs
    st.markdown("#### Segment Details and Recommendations")
    
-   segment_tabs = st.tabs([name for name in rfm['Segmentasi_optimal'].unique()])
-   
-   for i, segment in enumerate(rfm['Segmentasi_optimal'].unique()):
-       with segment_tabs[i]:
-           segment_data = rfm[rfm['Segmentasi_optimal'] == segment]
-           invitation = segment_data['Layak_Diundang_optimal'].iloc[0]
-           
-           col1, col2 = st.columns([2, 1])
-           
-           with col1:
-               st.markdown(f"""
-               ### {segment}
+   try:
+       segment_names = sorted(rfm['Segmentasi_optimal'].unique())
+       segment_tabs = st.tabs(segment_names)
+       
+       for i, segment in enumerate(segment_names):
+           with segment_tabs[i]:
+               segment_data = rfm[rfm['Segmentasi_optimal'] == segment]
+               invitation = segment_data['Layak_Diundang_optimal'].iloc[0]
                
-               **Segment Size:** {segment_data.shape[0]:,} customers ({segment_data.shape[0]/rfm.shape[0]*100:.1f}% of total)
+               col1, col2 = st.columns([2, 1])
                
-               **Invitation Status:** {invitation}
-               
-               **Key Characteristics:**
-               - Average Recency: {segment_data['Recency'].mean():.0f} days since last transaction
-               - Average Products: {segment_data['Frequency'].mean():.1f}
-               - Average Value: Rp {segment_data['Monetary'].mean():,.0f}
-               - Repeat Customer Rate: {segment_data['Repeat_Customer'].mean()*100:.1f}%
-               - Prime Age Rate (25-45): {segment_data['Usia_Segment'].mean()*100:.1f}%
-               """)
-               
-               # Recommendations based on segment
-               if segment == "Potential Loyalists":
-                   st.markdown("""
-                   **Recommended Strategy:**
-                   - Focus on loyalty programs to convert to full loyalists
-                   - Offer membership benefits
-                   - Personalized communication with relevant cross-sell opportunities
-                   - Early access to new products and special events
+               with col1:
+                   st.markdown(f"""
+                   ### {segment}
+                   
+                   **Segment Size:** {segment_data.shape[0]:,} customers ({segment_data.shape[0]/rfm.shape[0]*100:.1f}% of total)
+                   
+                   **Invitation Status:** {invitation}
+                   
+                   **Key Characteristics:**
+                   - Average Recency: {segment_data['Recency'].mean():.0f} days since last transaction
+                   - Average Products: {segment_data['Frequency'].mean():.1f}
+                   - Average Value: Rp {segment_data['Monetary'].mean():,.0f}
+                   - Repeat Customer Rate: {segment_data['Repeat_Customer'].mean()*100:.1f}%
                    """)
                    
-               elif segment == "Responsive Customers":
-                   st.markdown("""
-                   **Recommended Strategy:**
-                   - Targeted promotions for high response rate
-                   - Encourage more frequent purchases
-                   - Special limited-time offers
-                   - Reminders about products they might need
-                   """)
+                   if 'Usia_Segment' in segment_data.columns:
+                       st.markdown(f"- Prime Age Rate (25-45): {segment_data['Usia_Segment'].mean()*100:.1f}%")
                    
-               elif segment == "Occasional Buyers":
-                   st.markdown("""
-                   **Recommended Strategy:**
-                   - Incentives to increase purchase frequency
-                   - Re-engagement campaigns
-                   - Feedback surveys to understand barriers
-                   - Special "welcome back" offers
-                   """)
+                   # Recommendations based on segment
+                   if segment == "Potential Loyalists":
+                       st.markdown("""
+                       **Recommended Strategy:**
+                       - Focus on loyalty programs to convert to full loyalists
+                       - Offer membership benefits
+                       - Personalized communication with relevant cross-sell opportunities
+                       - Early access to new products and special events
+                       """)
+                       
+                   elif segment == "Responsive Customers":
+                       st.markdown("""
+                       **Recommended Strategy:**
+                       - Targeted promotions for high response rate
+                       - Encourage more frequent purchases
+                       - Special limited-time offers
+                       - Reminders about products they might need
+                       """)
+                       
+                   elif segment == "Occasional Buyers":
+                       st.markdown("""
+                       **Recommended Strategy:**
+                       - Incentives to increase purchase frequency
+                       - Re-engagement campaigns
+                       - Feedback surveys to understand barriers
+                       - Special "welcome back" offers
+                       """)
+                       
+                   elif segment == "Hibernating Customers":
+                       st.markdown("""
+                       **Recommended Strategy:**
+                       - Reactivation campaigns with strong incentives
+                       - Re-introduction to your product line
+                       - Check if contact information is current
+                       - Consider special win-back campaigns for high-value customers
+                       """)
+               
+               with col2:
+                   # Donut chart for this segment vs others
+                   segment_vs_others = pd.DataFrame([
+                       {'Category': segment, 'Count': len(segment_data)},
+                       {'Category': 'Others', 'Count': len(rfm) - len(segment_data)}
+                   ])
                    
-               elif segment == "Hibernating Customers":
-                   st.markdown("""
-                   **Recommended Strategy:**
-                   - Reactivation campaigns with strong incentives
-                   - Re-introduction to your product line
-                   - Check if contact information is current
-                   - Consider special win-back campaigns for high-value customers
-                   """)
-           
-           with col2:
-               # Donut chart for this segment vs others
-               segment_vs_others = pd.DataFrame([
-                   {'Category': segment, 'Count': len(segment_data)},
-                   {'Category': 'Others', 'Count': len(rfm) - len(segment_data)}
-               ])
-               
-               fig = px.pie(
-                   segment_vs_others,
-                   values='Count',
-                   names='Category',
-                   hole=0.6,
-                   color_discrete_sequence=['#003366', '#E0E0E0']
-               )
-               
-               fig.update_layout(
-                   title=f"{segment} vs Others",
-                   height=300
-               )
-               
-               st.plotly_chart(fig)
+                   fig = px.pie(
+                       segment_vs_others,
+                       values='Count',
+                       names='Category',
+                       hole=0.6,
+                       color_discrete_sequence=['#003366', '#E0E0E0']
+                   )
+                   
+                   fig.update_layout(
+                       title=f"{segment} vs Others",
+                       height=300
+                   )
+                   
+                   st.plotly_chart(fig)
+                   
+   except Exception as e:
+       st.error(f"Error creating segment details: {e}")
    
    # Provide download option
    st.markdown("#### Download Segmentation Results")
    
-   csv = rfm.to_csv(index=False)
-   st.download_button(
-       label="Download Complete Segmentation Data",
-       data=csv,
-       file_name="optimal_segmentation_results.csv",
-       mime="text/csv"
-   )
+   try:
+       csv = rfm.to_csv(index=False)
+       st.download_button(
+           label="Download Complete Segmentation Data",
+           data=csv,
+           file_name="optimal_segmentation_results.csv",
+           mime="text/csv"
+       )
+   except Exception as e:
+       st.error(f"Error preparing download: {e}")
    
    # Summary and next steps
    st.markdown("""
@@ -453,8 +484,8 @@ def display_optimal_segmentation_results(rfm):
    4. **Hibernating Customers**: Inactive customers who need reactivation
    
    **Next Steps:**
-   - Proceed to Promo Mapping to create targeted campaigns for each segment
    - Review customer profiles in each segment to understand characteristics
+   - Develop targeted marketing strategies for each segment
    - Set up tracking to measure customer movement between segments over time
    - Test different marketing approaches for each segment
    """)
@@ -586,7 +617,7 @@ def display_standard_segmentation_results(rfm, cluster_info, top_clusters):
    
    Based on the segmentation results, you can now:
    
-   1. Proceed to the Promo Mapping section to develop targeted campaigns for each cluster
-   2. Review the Dashboard for an integrated view of your customer segments
-   3. Export the results for further analysis or campaign implementation
+   1. Proceed to the Dashboard section for an integrated view of your customer segments
+   2. Export the results for further analysis or campaign implementation
+   3. Develop targeted marketing strategies for each cluster
    """)
