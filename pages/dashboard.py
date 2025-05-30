@@ -8,11 +8,11 @@ import datetime
 
 def show_dashboard_page():
     """
-    Fungsi untuk menampilkan halaman dashboard
+    Fungsi untuk menampilkan halaman dashboard (tanpa promo mapping)
     """
     st.markdown('<p class="section-title">SPEKTRA Customer Analytics Dashboard</p>', unsafe_allow_html=True)
     
-    # Check if segmentation and promo mapping are completed
+    # Check if EDA is completed
     if not st.session_state.eda_completed:
         st.warning("Please complete data preprocessing and EDA first.")
         return
@@ -30,15 +30,9 @@ def show_dashboard_page():
     if st.session_state.segmentation_completed and st.session_state.segmented_data is not None:
         segmented_data = st.session_state.segmented_data
         segmentation_overview(segmented_data)
+        invitation_summary(segmented_data)
     else:
-        st.info("Segmentation analysis has not been completed yet. Some dashboard components are not available.")
-    
-    # Check if promo mapping is completed
-    if st.session_state.promo_mapping_completed and st.session_state.promo_mapped_data is not None:
-        promo_data = st.session_state.promo_mapped_data
-        campaign_overview(promo_data)
-    else:
-        st.info("Promo mapping has not been completed yet. Campaign metrics are not available.")
+        st.info("Segmentation analysis has not been completed yet. Complete the segmentation to see detailed customer segments and invitation recommendations.")
 
 def customer_overview(data):
     """
@@ -351,165 +345,129 @@ def segmentation_overview(segmented_data):
     st.dataframe(display_metrics[['Cluster', 'Cluster_Name', 'Count', 'Percentage', 
                                  'Avg_Recency', 'Avg_Frequency', 'Avg_Monetary']])
 
-def campaign_overview(promo_data):
+def invitation_summary(segmented_data):
     """
-    Menampilkan overview kampanye
+    Menampilkan ringkasan undangan berdasarkan segmentasi
     
     Parameters:
     -----------
-    promo_data : pandas.DataFrame
-        Data hasil pemetaan promo
+    segmented_data : pandas.DataFrame
+        Data hasil segmentasi
     """
-    st.markdown("### Campaign & Promo Overview")
+    st.markdown("### Invitation Summary")
     
-    # Convert budget to numeric for visualization
-    if 'Allocated_Budget' in promo_data.columns and isinstance(promo_data['Allocated_Budget'].iloc[0], str):
-        promo_data['Allocated_Budget_Num'] = promo_data['Allocated_Budget'].apply(
-            lambda x: float(x.replace("Rp ", "").replace(",", ""))
-        )
-    elif 'Allocated_Budget' in promo_data.columns:
-        promo_data['Allocated_Budget_Num'] = promo_data['Allocated_Budget']
+    # Check which invitation column exists
+    invitation_col = None
+    if 'Layak_Diundang_optimal' in segmented_data.columns:
+        invitation_col = 'Layak_Diundang_optimal'
+    elif 'Invitation_Status' in segmented_data.columns:
+        invitation_col = 'Invitation_Status'
     
-    # Key metrics
-    total_customers = promo_data['Customer_Count'].sum() if 'Customer_Count' in promo_data.columns else 0
-    total_budget = promo_data['Allocated_Budget_Num'].sum() if 'Allocated_Budget_Num' in promo_data.columns else 0
-    avg_budget_per_customer = total_budget / total_customers if total_customers > 0 else 0
+    if invitation_col is None:
+        st.warning("No invitation status found in segmentation data.")
+        return
     
+    # Calculate invitation metrics
+    total_customers = len(segmented_data)
+    invited_customers = len(segmented_data[segmented_data[invitation_col].str.contains('✅', na=False)])
+    not_invited_customers = total_customers - invited_customers
+    
+    # Display metrics
     col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("""
         <div class="metric-box">
-            <p style="font-size: 14px; margin-bottom: 0;">Target Customers</p>
+            <p style="font-size: 14px; margin-bottom: 0;">Total Customers</p>
             <h2 style="margin-top: 0;">{:,}</h2>
         </div>
         """.format(total_customers), unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
-        <div class="metric-box">
-            <p style="font-size: 14px; margin-bottom: 0;">Total Campaign Budget</p>
-            <h2 style="margin-top: 0;">Rp {:,.0f}</h2>
+        <div style="background-color: #28a745; color: white; padding: 10px; border-radius: 5px; text-align: center;">
+            <p style="font-size: 14px; margin-bottom: 0;">✅ Invited</p>
+            <h2 style="margin-top: 0;">{:,} ({:.1f}%)</h2>
         </div>
-        """.format(total_budget), unsafe_allow_html=True)
+        """.format(invited_customers, invited_customers/total_customers*100), unsafe_allow_html=True)
     
     with col3:
         st.markdown("""
-        <div class="metric-box">
-            <p style="font-size: 14px; margin-bottom: 0;">Budget per Customer</p>
-            <h2 style="margin-top: 0;">Rp {:,.0f}</h2>
+        <div style="background-color: #dc3545; color: white; padding: 10px; border-radius: 5px; text-align: center;">
+            <p style="font-size: 14px; margin-bottom: 0;">❌ Not Invited</p>
+            <h2 style="margin-top: 0;">{:,} ({:.1f}%)</h2>
         </div>
-        """.format(avg_budget_per_customer), unsafe_allow_html=True)
+        """.format(not_invited_customers, not_invited_customers/total_customers*100), unsafe_allow_html=True)
     
-    # Promotion Types Overview
-    st.markdown("#### Promotion Types Overview")
+    # Invitation status by segment
+    st.markdown("#### Invitation Status by Segment")
     
-    if 'Promo_Type' in promo_data.columns:
-        # Budget allocation by promo type
-        promo_budget = promo_data.groupby('Promo_Type').agg({
-            'Allocated_Budget_Num': 'sum',
-            'Customer_Count': 'sum'
-        }).reset_index()
-        
-        # Calculate percentage
-        promo_budget['Budget_Percentage'] = promo_budget['Allocated_Budget_Num'] / promo_budget['Allocated_Budget_Num'].sum() * 100
-        
-        # Create combined visualization
-        fig = make_subplots(
-            rows=1, cols=2,
-            specs=[[{"type": "pie"}, {"type": "pie"}]],
-            subplot_titles=("Budget Allocation by Promo Type", "Customers by Promo Type")
-        )
-        
-        # Budget allocation pie chart
-        fig.add_trace(
-            go.Pie(
-                labels=promo_budget['Promo_Type'],
-                values=promo_budget['Allocated_Budget_Num'],
-                textinfo='percent',
-                hole=0.4,
-                marker_colors=px.colors.qualitative.Pastel,
-                showlegend=True
-            ),
-            row=1, col=1
-        )
-        
-        # Customer distribution pie chart
-        fig.add_trace(
-            go.Pie(
-                labels=promo_budget['Promo_Type'],
-                values=promo_budget['Customer_Count'],
-                textinfo='percent',
-                hole=0.4,
-                marker_colors=px.colors.qualitative.Pastel,
-                showlegend=False
-            ),
-            row=1, col=2
-        )
-        
-        fig.update_layout(
-            height=400,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+    # Check if optimal segmentation was used
+    if 'Segmentasi_optimal' in segmented_data.columns:
+        segment_col = 'Segmentasi_optimal'
     else:
-        st.info("Promotion type data not available.")
+        segment_col = 'Cluster'
     
-    # Customer Value and Recency Status
-    st.markdown("#### Customer Segments in Campaign")
+    # Create invitation summary by segment
+    invitation_summary = segmented_data.groupby([segment_col, invitation_col]).size().unstack(fill_value=0)
+    invitation_summary['Total'] = invitation_summary.sum(axis=1)
     
-    if 'Customer_Value' in promo_data.columns and 'Recency_Status' in promo_data.columns:
-        # Create combined data
-        value_recency = promo_data.groupby(['Customer_Value', 'Recency_Status']).agg({
-            'Customer_Count': 'sum',
-            'Allocated_Budget_Num': 'sum'
-        }).reset_index()
+    # Calculate percentages
+    for col in invitation_summary.columns[:-1]:  # Exclude 'Total' column
+        invitation_summary[f'{col}_pct'] = invitation_summary[col] / invitation_summary['Total'] * 100
+    
+    # Display as a chart
+    invited_counts = []
+    not_invited_counts = []
+    segment_names = []
+    
+    for segment in invitation_summary.index:
+        segment_names.append(str(segment))
         
-        # Stacked bar chart
-        fig = px.bar(
-            value_recency,
-            x='Customer_Value',
-            y='Customer_Count',
-            color='Recency_Status',
-            title="Customer Distribution by Value and Recency Status",
-            text_auto=True,
-            color_discrete_sequence=px.colors.sequential.Blues
-        )
+        invited = 0
+        not_invited = 0
         
-        fig.update_layout(
-            xaxis_title="Customer Value Segment",
-            yaxis_title="Number of Customers",
-            legend_title="Recency Status",
-            height=400
-        )
+        for col in invitation_summary.columns:
+            if '✅' in str(col):
+                invited = invitation_summary.loc[segment, col]
+            elif '❌' in str(col):
+                not_invited = invitation_summary.loc[segment, col]
         
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Budget allocation heatmap
-        value_recency_pivot = value_recency.pivot_table(
-            index='Customer_Value', 
-            columns='Recency_Status', 
-            values='Allocated_Budget_Num',
-            aggfunc='sum'
-        ).fillna(0)
-        
-        # Format for display (convert to millions)
-        value_recency_pivot_display = value_recency_pivot / 1000000
-        
-        fig = px.imshow(
-            value_recency_pivot_display,
-            text_auto='.2f',
-            title="Budget Allocation (in millions) by Customer Segment",
-            color_continuous_scale='Blues',
-            labels=dict(x="Recency Status", y="Customer Value", color="Budget (Millions)")
-        )
-        
-        fig.update_layout(height=350)
-        
-        st.plotly_chart(fig, use_container_width=True)
+        invited_counts.append(invited)
+        not_invited_counts.append(not_invited)
+    
+    # Create stacked bar chart
+    fig = go.Figure(data=[
+        go.Bar(name='✅ Invited', x=segment_names, y=invited_counts, marker_color='#28a745'),
+        go.Bar(name='❌ Not Invited', x=segment_names, y=not_invited_counts, marker_color='#dc3545')
+    ])
+    
+    fig.update_layout(
+        barmode='stack',
+        title='Invitation Status by Customer Segment',
+        xaxis_title='Customer Segment',
+        yaxis_title='Number of Customers',
+        height=400
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Show detailed table
+    st.markdown("#### Detailed Invitation Breakdown")
+    st.dataframe(invitation_summary)
+    
+    # Recommendations
+    st.markdown("#### Recommendations")
+    
+    if invited_customers > 0:
+        st.success(f"""
+        **Action Items:**
+        - Focus marketing efforts on {invited_customers:,} invited customers ({invited_customers/total_customers*100:.1f}% of total)
+        - Prioritize segments with high invitation rates for campaign execution
+        - Consider re-engagement strategies for non-invited customers to improve their segment scores
+        """)
     else:
-        st.info("Customer segment data not available.")
+        st.warning("No customers are currently recommended for invitation. Consider adjusting segmentation criteria.")
 
 def create_cluster_name(recency, frequency, monetary):
     """
