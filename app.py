@@ -100,7 +100,7 @@ def load_sidebar():
             unsafe_allow_html=True
         )
     except:
-        st.sidebar.title("SPEKTRA")
+        st.sidebar.title("XYZ Elektronik")
     
     # Judul sidebar
     st.sidebar.markdown('<p class="sidebar-title">Customer Segmentation & Analysis</p>', unsafe_allow_html=True)
